@@ -128,8 +128,9 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
 
 /**
  * Parses PixAI/SD format text into structured segments.
- * Supports (tag:1.2) syntax, including nested parentheses like (tag (detail):1.2).
+ * Supports (tag:1.2) syntax.
  * Handles escaped parentheses \( and \) by unescaping them in the content.
+ * Regex updated to correctly parse (tag \(info\):1.2)
  */
 export const parsePixAI = (text: string): ParsedSegment[] => {
   if (!text) return [];
@@ -142,7 +143,8 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
   // 1. `[^:()\\\\]` : Matches any character except `:`, `(`, `)`, or `\`
   // 2. `\\.`        : Matches any escaped character (e.g., `\(`, `\)`)
   // 3. `\((?:[^()]|\\.)*\)` : Matches nested parentheses with optional internal escapes
-  const regex = /\(((?:[^:()\\\\]|\\.|\((?:[^()]|\\.)*\))+):(\d+(?:\.\d+)?)\)/g;
+  // Note: For simple PixAI tag escaping, `((?:[^:()]|\\.)+)` handles `tag \(tag\)` correctly.
+  const regex = /\(((?:[^:()]|\\.)+):(\d+(?:\.\d+)?)\)/g;
 
   let lastIndex = 0;
   let match;
@@ -207,7 +209,7 @@ export const segmentsToPixAI = (segments: ParsedSegment[]): string => {
       // Escape parenthesis for PixAI
       content = escapePixAI(content);
 
-      // If weight is effectively 1, just return content
+      // If weight is effectively 1, just return content (with escapes)
       if (w === 1.0) {
         return content;
       }
