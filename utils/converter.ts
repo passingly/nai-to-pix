@@ -89,8 +89,6 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
     const char = text[i];
 
     // 2. Check for Brackets/Braces
-    // IMPORTANT: We must flush the buffer BEFORE changing depth for opening brackets (to save outer text)
-    // and BEFORE changing depth for closing brackets (to save inner text with its weight).
     if (char === '{') {
       flush();
       curlyDepth++;
@@ -128,75 +126,136 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
 
 /**
  * Parses PixAI/SD format text into structured segments.
- * Supports (tag:1.2) syntax.
- * Handles escaped parentheses \( and \) by unescaping them in the content.
- * Regex updated to correctly parse (tag \(info\):1.2)
+ * 
+ * Rules:
+ * 1. ( ... ) adds +0.1 weight (nested: (( )) is +0.2).
+ * 2. [ ... ] subtracts -0.1 weight.
+ * 3. (tag:1.5) sets absolute weight to 1.5, overriding any surrounding brackets.
+ *    e.g., ((tag:1.5)) -> weight 1.5, NOT 1.7.
+ * 4. Commas separate tags but preserve current bracket depth for the next tag in the group.
+ *    e.g., (tag1, tag2) -> both get +0.1.
  */
 export const parsePixAI = (text: string): ParsedSegment[] => {
   if (!text) return [];
 
   const segments: ParsedSegment[] = [];
   
-  // Regex Explanation:
-  // Matches `( ... : weight )`
-  // Content group `((?: ... )+)` allows:
-  // 1. `[^:()\\\\]` : Matches any character except `:`, `(`, `)`, or `\`
-  // 2. `\\.`        : Matches any escaped character (e.g., `\(`, `\)`)
-  // 3. `\((?:[^()]|\\.)*\)` : Matches nested parentheses with optional internal escapes
-  // Note: For simple PixAI tag escaping, `((?:[^:()]|\\.)+)` handles `tag \(tag\)` correctly.
-  const regex = /\(((?:[^:()]|\\.)+):(\d+(?:\.\d+)?)\)/g;
+  let currentBracketBonus = 0.0; // Accumulated weight from brackets
+  let buffer = '';
 
-  let lastIndex = 0;
-  let match;
+  // Regex to detect explicit weight syntax like (tag:1.5)
+  // Captures group 1: content, group 2: weight
+  const explicitWeightRegex = /^\(((?:[^:()\\]|\\.)+):(\d+(?:\.\d+)?)\)/;
 
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      const plainText = text.slice(lastIndex, match.index);
-      if (plainText.trim()) {
-        segments.push({
-          id: generateId(),
-          type: 'text',
-          raw: plainText,
-          content: unescapePixAI(plainText),
-          weight: 1.0
-        });
+  const flush = (overrideWeight?: number) => {
+    const trimmed = buffer.trim();
+    if (trimmed) {
+      let finalWeight = 1.0;
+
+      if (overrideWeight !== undefined) {
+        finalWeight = overrideWeight;
+      } else {
+        finalWeight = 1.0 + currentBracketBonus;
+      }
+
+      // Fix precision
+      finalWeight = Math.round(finalWeight * 1000) / 1000;
+
+      segments.push({
+        id: generateId(),
+        type: finalWeight === 1.0 ? 'text' : 'weight',
+        raw: trimmed,
+        content: unescapePixAI(trimmed), // Unescape content for internal storage
+        weight: finalWeight
+      });
+    }
+    buffer = '';
+  };
+
+  let i = 0;
+  while (i < text.length) {
+    const char = text[i];
+
+    // 1. Handle Escaped Characters
+    if (char === '\\') {
+      if (i + 1 < text.length) {
+        buffer += char + text[i + 1];
+        i += 2;
+        continue;
       }
     }
 
-    const rawContent = match[1];
-    const weight = parseFloat(match[2]);
-    const content = unescapePixAI(rawContent);
+    // 2. Check for Explicit Weight Syntax: (tag:1.5)
+    // We check this when we hit an opening parenthesis
+    if (char === '(') {
+      const remaining = text.slice(i);
+      const match = remaining.match(explicitWeightRegex);
 
-    segments.push({
-      id: generateId(),
-      type: 'weight',
-      raw: match[0],
-      weight,
-      content: content.trim()
-    });
+      if (match) {
+        // Found (tag:1.5). 
+        // Flush previous buffer using CURRENT context.
+        flush();
+        
+        // Add the explicit tag with its ABSOLUTE weight.
+        const content = match[1];
+        const weight = parseFloat(match[2]);
+        
+        // Add directly as segment
+        segments.push({
+          id: generateId(),
+          type: 'weight',
+          raw: match[0],
+          content: unescapePixAI(content.trim()),
+          weight: weight
+        });
 
-    lastIndex = regex.lastIndex;
-  }
+        // Advance index past the entire (tag:1.5) block
+        i += match[0].length;
+        continue;
+      }
+    }
 
-  if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex);
-    if (remaining.trim()) {
-      segments.push({
-        id: generateId(),
-        type: 'text',
-        raw: remaining,
-        content: unescapePixAI(remaining),
-        weight: 1.0
-      });
+    // 3. Handle Brackets acting as modifiers
+    if (char === '(') {
+      flush();
+      currentBracketBonus += 0.1;
+      i++;
+    } else if (char === ')') {
+      flush();
+      currentBracketBonus -= 0.1; 
+      // Prevent floating point drift somewhat, though rounding handles it at flush
+      i++;
+    } else if (char === '[') {
+      flush();
+      currentBracketBonus -= 0.1;
+      i++;
+    } else if (char === ']') {
+      flush();
+      currentBracketBonus += 0.1;
+      i++;
+    } 
+    // 4. Handle Comma
+    else if (char === ',') {
+      flush();
+      i++;
+    } 
+    // 5. Normal Character
+    else {
+      buffer += char;
+      i++;
     }
   }
+
+  flush();
 
   return segments;
 };
 
 /**
  * Converts structured segments to PixAI format string.
- * Escapes parentheses in content to \( and \).
+ * - Uses (tag) for 1.1
+ * - Uses [tag] for 0.9
+ * - Uses (tag:1.5) for other weights
  */
 export const segmentsToPixAI = (segments: ParsedSegment[]): string => {
   return segments
@@ -209,10 +268,19 @@ export const segmentsToPixAI = (segments: ParsedSegment[]): string => {
       // Escape parenthesis for PixAI
       content = escapePixAI(content);
 
-      // If weight is effectively 1, just return content (with escapes)
       if (w === 1.0) {
         return content;
       }
+      
+      // Idiomatic shortcuts
+      if (w === 1.1) {
+        return `(${content})`;
+      }
+      if (w === 0.9) {
+        return `[${content}]`;
+      }
+
+      // Explicit syntax for everything else
       return `(${content}:${w})`;
     })
     .join(', ');
