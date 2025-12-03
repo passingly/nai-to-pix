@@ -253,9 +253,8 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
 
 /**
  * Converts structured segments to PixAI format string.
- * - Uses (tag) for 1.1
- * - Uses [tag] for 0.9
- * - Uses (tag:1.5) for other weights
+ * Always uses explicit syntax (tag:weight) for any weight != 1.0
+ * to ensure maximum compatibility.
  */
 export const segmentsToPixAI = (segments: ParsedSegment[]): string => {
   return segments
@@ -272,15 +271,7 @@ export const segmentsToPixAI = (segments: ParsedSegment[]): string => {
         return content;
       }
       
-      // Idiomatic shortcuts
-      if (w === 1.1) {
-        return `(${content})`;
-      }
-      if (w === 0.9) {
-        return `[${content}]`;
-      }
-
-      // Explicit syntax for everything else
+      // Explicit syntax for everything else: (tag:weight)
       return `(${content}:${w})`;
     })
     .join(', ');
