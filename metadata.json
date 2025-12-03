@@ -1,0 +1,5 @@
+{
+  "name": "NAI 프롬프트 변환기",
+  "description": "A tool to convert prompt weighting syntax between NovelAI (Custom format) and PixAI/Stable Diffusion formats.",
+  "requestFramePermissions": []
+}
