@@ -19,21 +19,35 @@ const unescapePixAI = (text: string): string => {
 };
 
 /**
+ * Helper: Round number to 2 decimal places.
+ */
+const roundWeight = (num: number): number => {
+  return Math.round(num * 100) / 100;
+};
+
+/**
  * Parses NovelAI format text into structured segments using a strictly stateful approach.
  * Handles:
- * 1. "N::" sets a persistent base weight.
- * 2. "::" resets base weight to 1.0.
- * 3. "{ }" increases weight by 0.1 per nesting level.
- * 4. "[ ]" decreases weight by 0.1 per nesting level.
+ * 1. "N::" sets a persistent base weight AND RESETS bracket counters.
+ *    - IMPORANT: "N::" completely clears the bracket history for the following text.
+ *    - Closing brackets after "N::" will therefore drive depth negative.
+ * 2. "::" resets base weight to 1.0 and RESETS bracket counters.
+ * 3. "{ }" multiplies weight by 1.05 per nesting level.
+ * 4. "[ ]" multiplies weight by 0.95 per nesting level.
  * 5. Commas split segments, inheriting the current weight state.
  */
 export const parseNovelAI = (text: string): ParsedSegment[] => {
   if (!text) return [];
   
   const segments: ParsedSegment[] = [];
-  let currentBaseWeight = 1.0;
-  let curlyDepth = 0; // Each level adds +0.1
-  let squareDepth = 0; // Each level adds -0.1
+  
+  // Current bracket nesting levels
+  // These can go negative if "N::" resets them and then closing brackets appear.
+  let curlyDepth = 0; // Each level x1.05
+  let squareDepth = 0; // Each level x0.95
+  
+  // Weight Control State
+  let activeBaseWeight = 1.0;
   
   let buffer = '';
   
@@ -44,13 +58,14 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
   const flush = () => {
     const trimmed = buffer.trim();
     if (trimmed) {
-      // Calculate final weight
-      // Formula: Base + (Curly * 0.1) - (Square * 0.1)
-      const modifier = (curlyDepth * 0.1) - (squareDepth * 0.1);
-      let finalWeight = currentBaseWeight + modifier;
+      // Calculate multipliers. Depth can be negative.
+      const curlyMult = Math.pow(1.05, curlyDepth);
+      const squareMult = Math.pow(0.95, squareDepth);
       
-      // Fix float precision issues (e.g. 1.200000001)
-      finalWeight = Math.round(finalWeight * 1000) / 1000;
+      let finalWeight = activeBaseWeight * curlyMult * squareMult;
+      
+      // Round to 2 decimal places
+      finalWeight = roundWeight(finalWeight);
 
       segments.push({
         id: generateId(),
@@ -76,11 +91,18 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
       if (numStr) {
         // "2::" -> set base to 2
         const w = parseFloat(numStr);
-        if (!isNaN(w)) currentBaseWeight = w;
+        if (!isNaN(w)) {
+            activeBaseWeight = w;
+        }
       } else {
-        // "::" -> reset base to 1
-        currentBaseWeight = 1.0;
+        // "::" -> reset base to 1.0
+        activeBaseWeight = 1.0;
       }
+
+      // CRITICAL UPDATE: NAI resets the bracket stack when using :: syntax.
+      // This means subsequent closing brackets will create negative depth.
+      curlyDepth = 0;
+      squareDepth = 0;
       
       i += match[0].length;
       continue;
@@ -95,7 +117,7 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
       i++;
     } else if (char === '}') {
       flush();
-      curlyDepth = Math.max(0, curlyDepth - 1);
+      curlyDepth--; // Allow going negative
       i++;
     } else if (char === '[') {
       flush();
@@ -103,7 +125,7 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
       i++;
     } else if (char === ']') {
       flush();
-      squareDepth = Math.max(0, squareDepth - 1);
+      squareDepth--; // Allow going negative
       i++;
     } 
     // 3. Check for Comma
@@ -128,23 +150,23 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
  * Parses PixAI/SD format text into structured segments.
  * 
  * Rules:
- * 1. ( ... ) adds +0.1 weight (nested: (( )) is +0.2).
- * 2. [ ... ] subtracts -0.1 weight.
+ * 1. ( ... ) multiplies weight by 1.05.
+ * 2. [ ... ] multiplies weight by 0.95.
  * 3. (tag:1.5) sets absolute weight to 1.5, overriding any surrounding brackets.
- *    e.g., ((tag:1.5)) -> weight 1.5, NOT 1.7.
  * 4. Commas separate tags but preserve current bracket depth for the next tag in the group.
- *    e.g., (tag1, tag2) -> both get +0.1.
  */
 export const parsePixAI = (text: string): ParsedSegment[] => {
   if (!text) return [];
 
   const segments: ParsedSegment[] = [];
   
-  let currentBracketBonus = 0.0; // Accumulated weight from brackets
+  // Track nesting levels
+  let parenDepth = 0;  // x1.05
+  let squareDepth = 0; // x0.95
+  
   let buffer = '';
 
   // Regex to detect explicit weight syntax like (tag:1.5)
-  // Captures group 1: content, group 2: weight
   const explicitWeightRegex = /^\(((?:[^:()\\]|\\.)+):(\d+(?:\.\d+)?)\)/;
 
   const flush = (overrideWeight?: number) => {
@@ -155,11 +177,14 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
       if (overrideWeight !== undefined) {
         finalWeight = overrideWeight;
       } else {
-        finalWeight = 1.0 + currentBracketBonus;
+        // Calculate based on depth using multiplication logic
+        const parenMult = Math.pow(1.05, parenDepth);
+        const squareMult = Math.pow(0.95, squareDepth);
+        finalWeight = 1.0 * parenMult * squareMult;
       }
 
-      // Fix precision
-      finalWeight = Math.round(finalWeight * 1000) / 1000;
+      // Round to 2 decimal places
+      finalWeight = roundWeight(finalWeight);
 
       segments.push({
         id: generateId(),
@@ -206,7 +231,7 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
           type: 'weight',
           raw: match[0],
           content: unescapePixAI(content.trim()),
-          weight: weight
+          weight: weight // Use exact weight provided in explicit syntax
         });
 
         // Advance index past the entire (tag:1.5) block
@@ -218,20 +243,19 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
     // 3. Handle Brackets acting as modifiers
     if (char === '(') {
       flush();
-      currentBracketBonus += 0.1;
+      parenDepth++;
       i++;
     } else if (char === ')') {
       flush();
-      currentBracketBonus -= 0.1; 
-      // Prevent floating point drift somewhat, though rounding handles it at flush
+      parenDepth = Math.max(0, parenDepth - 1);
       i++;
     } else if (char === '[') {
       flush();
-      currentBracketBonus -= 0.1;
+      squareDepth++;
       i++;
     } else if (char === ']') {
       flush();
-      currentBracketBonus += 0.1;
+      squareDepth = Math.max(0, squareDepth - 1);
       i++;
     } 
     // 4. Handle Comma

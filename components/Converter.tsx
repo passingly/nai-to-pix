@@ -134,9 +134,9 @@ const Converter: React.FC = () => {
         </p>
         <p>
           <span className="font-bold text-indigo-400">괄호 연산:</span> 현재 기본 가중치에 대해
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'{}'}</code>는 <strong>+0.1</strong>, 
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>-0.1</strong>을 더합니다.
-          (예: <code className="text-slate-300">1.1::tag1, {'{tag2}'}</code> → <code className="text-slate-300">(tag1:1.1), (tag2:1.2)</code>)
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'{}'} / ()</code>는 <strong>x1.05</strong>, 
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.95</strong>를 곱합니다.
+          최종 결과는 소수점 둘째 자리에서 반올림됩니다.
         </p>
         <p>
           <span className="font-bold text-indigo-400">개별 분리:</span> 쉼표(,)를 기준으로 태그가 분리되며, 각각 해당 시점의 가중치 상태가 적용되어 변환됩니다.
