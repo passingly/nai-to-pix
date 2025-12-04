@@ -150,8 +150,8 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
  * Parses PixAI/SD format text into structured segments.
  * 
  * Rules:
- * 1. ( ... ) multiplies weight by 1.05.
- * 2. [ ... ] multiplies weight by 0.95.
+ * 1. ( ... ) multiplies weight by 1.1.
+ * 2. [ ... ] multiplies weight by 0.9.
  * 3. (tag:1.5) sets absolute weight to 1.5, overriding any surrounding brackets.
  * 4. Commas separate tags but preserve current bracket depth for the next tag in the group.
  */
@@ -161,8 +161,8 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
   const segments: ParsedSegment[] = [];
   
   // Track nesting levels
-  let parenDepth = 0;  // x1.05
-  let squareDepth = 0; // x0.95
+  let parenDepth = 0;  // x1.1
+  let squareDepth = 0; // x0.9
   
   let buffer = '';
 
@@ -178,8 +178,9 @@ export const parsePixAI = (text: string): ParsedSegment[] => {
         finalWeight = overrideWeight;
       } else {
         // Calculate based on depth using multiplication logic
-        const parenMult = Math.pow(1.05, parenDepth);
-        const squareMult = Math.pow(0.95, squareDepth);
+        // Updated logic: ( ) is 1.1x, [ ] is 0.9x
+        const parenMult = Math.pow(1.1, parenDepth);
+        const squareMult = Math.pow(0.9, squareDepth);
         finalWeight = 1.0 * parenMult * squareMult;
       }
 

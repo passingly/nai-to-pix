@@ -133,13 +133,15 @@ const Converter: React.FC = () => {
           <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">::</code>를 만나면 1.0으로 초기화됩니다.
         </p>
         <p>
-          <span className="font-bold text-indigo-400">괄호 연산:</span> 현재 기본 가중치에 대해
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'{}'} / ()</code>는 <strong>x1.05</strong>, 
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.95</strong>를 곱합니다.
-          최종 결과는 소수점 둘째 자리에서 반올림됩니다.
+          <span className="font-bold text-indigo-400">괄호 연산:</span> NovelAI의
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'{}'}</code>는 <strong>x1.05</strong>, 
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.95</strong>입니다.
+          반면 PixAI/SD의
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">()</code>는 <strong>x1.1</strong>,
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.9</strong>입니다.
         </p>
         <p>
-          <span className="font-bold text-indigo-400">개별 분리:</span> 쉼표(,)를 기준으로 태그가 분리되며, 각각 해당 시점의 가중치 상태가 적용되어 변환됩니다.
+          <span className="font-bold text-indigo-400">결과 처리:</span> 모든 변환 결과는 소수점 둘째 자리에서 반올림되며, PixAI 변환 시 <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">(tag:weight)</code> 형식으로 명시적 변환됩니다.
         </p>
       </div>
     </div>
