@@ -12,26 +12,58 @@ import PromptHighlighter from './PromptHighlighter';
 
 const Converter: React.FC = () => {
   const [direction, setDirection] = useState<ConversionDirection>(ConversionDirection.NAI_TO_PIX);
-  const [sourceText, setSourceText] = useState('');
-  const [resultText, setResultText] = useState('');
+  
+  // Input States
+  const [sourceText, setSourceText] = useState(''); // Positive Input (or Combined NAI)
+  const [sourceNegativeText, setSourceNegativeText] = useState(''); // Negative Input (Pix Only)
+
+  // Output States
+  const [resultText, setResultText] = useState(''); // Positive Result (or Combined NAI)
+  const [resultNegativeText, setResultNegativeText] = useState(''); // Negative Result (Pix Only)
+
   const [segments, setSegments] = useState<ParsedSegment[]>([]);
 
-  // Parse and convert whenever source text or direction changes
+  // Parse and convert logic
   useEffect(() => {
-    let parsed: ParsedSegment[] = [];
-    let result = '';
+    let allSegments: ParsedSegment[] = [];
 
     if (direction === ConversionDirection.NAI_TO_PIX) {
-      parsed = parseNovelAI(sourceText);
-      result = segmentsToPixAI(parsed);
+      // 1. NAI -> PixAI
+      // NAI inputs are single field, but can contain negative weights (-2::tag::)
+      const parsed = parseNovelAI(sourceText);
+      allSegments = parsed;
+
+      // Split segments based on weight polarity
+      const positiveSegs = parsed.filter(s => (s.weight === undefined || s.weight >= 0));
+      const negativeSegs = parsed
+        .filter(s => s.weight !== undefined && s.weight < 0)
+        .map(s => ({ ...s, weight: Math.abs(s.weight!) })); // Flip to positive for the Negative Prompt
+
+      setResultText(segmentsToPixAI(positiveSegs));
+      setResultNegativeText(segmentsToPixAI(negativeSegs));
+    
     } else {
-      parsed = parsePixAI(sourceText);
-      result = segmentsToNovelAI(parsed);
+      // 2. PixAI -> NAI
+      // Pix inputs are split. We need to merge them into NAI format.
+      const positiveSegs = parsePixAI(sourceText);
+      
+      // Treat negative input as segments with negative weight
+      const negativeSegsRaw = parsePixAI(sourceNegativeText);
+      const negativeSegs = negativeSegsRaw.map(s => ({
+        ...s,
+        weight: (s.weight || 1.0) * -1 // Force negative
+      }));
+
+      allSegments = [...positiveSegs, ...negativeSegs];
+      
+      setResultText(segmentsToNovelAI(allSegments));
+      // NAI doesn't have a separate negative output field in this tool's context, 
+      // everything goes to the main prompt as -N::...::
+      setResultNegativeText(''); 
     }
 
-    setSegments(parsed);
-    setResultText(result);
-  }, [sourceText, direction]);
+    setSegments(allSegments);
+  }, [sourceText, sourceNegativeText, direction]);
 
   const toggleDirection = () => {
     const newDirection =
@@ -40,19 +72,28 @@ const Converter: React.FC = () => {
         : ConversionDirection.NAI_TO_PIX;
 
     setDirection(newDirection);
+    
+    // Swap outputs to inputs for convenience
     setSourceText(resultText);
+    setSourceNegativeText(resultNegativeText);
   };
 
   const getSourceLabel = () =>
-    direction === ConversionDirection.NAI_TO_PIX ? 'Novel AI (Custom)' : 'Pix AI / SD';
+    direction === ConversionDirection.NAI_TO_PIX ? 'Novel AI (Custom)' : 'Pix AI / SD (Positive)';
   
+  const getSourceNegativeLabel = () =>
+    direction === ConversionDirection.NAI_TO_PIX ? 'Novel AI (Negative - Not Used)' : 'Pix AI / SD (Negative)';
+
   const getTargetLabel = () =>
-    direction === ConversionDirection.NAI_TO_PIX ? 'Pix AI / SD' : 'Novel AI (Custom)';
+    direction === ConversionDirection.NAI_TO_PIX ? 'Pix AI / SD (Positive)' : 'Novel AI (Custom)';
+
+  const getTargetNegativeLabel = () =>
+    direction === ConversionDirection.NAI_TO_PIX ? 'Pix AI / SD (Negative)' : 'Novel AI (Negative)';
 
   const getSourcePlaceholder = () =>
     direction === ConversionDirection.NAI_TO_PIX
-      ? '예시: 2::1girl::, 1.5::sword, {shield}::\n또는 1.1::tag1, {tag2::'
-      : '예시: masterpiece, (1girl:2), (sword:1.5), shield';
+      ? '예시: 2::1girl::, -1::worst quality::, 1.5::sword'
+      : '예시: masterpiece, (1girl:2), (sword:1.5)';
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,42 +113,92 @@ const Converter: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Source Input */}
-        <div className="flex flex-col gap-2">
-          <ActionButtons 
-            text={sourceText} 
-            onClear={() => setSourceText('')} 
-            label={`입력 (${getSourceLabel()})`} 
-          />
-          <div className="relative group flex-1">
-            <textarea
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-              placeholder={getSourcePlaceholder()}
-              className="w-full h-80 lg:h-96 p-4 bg-slate-900/80 border border-slate-700 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-slate-200 placeholder-slate-600 font-mono text-sm leading-relaxed transition-all shadow-inner"
-              spellCheck={false}
+        {/* Source Column */}
+        <div className="flex flex-col gap-4">
+          
+          {/* Main Source Input */}
+          <div className="flex flex-col gap-2 flex-1">
+            <ActionButtons 
+              text={sourceText} 
+              onClear={() => setSourceText('')} 
+              label={getSourceLabel()} 
             />
-            <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-600 transition-colors" />
+            <div className="relative group flex-1">
+              <textarea
+                value={sourceText}
+                onChange={(e) => setSourceText(e.target.value)}
+                placeholder={getSourcePlaceholder()}
+                className="w-full h-64 p-4 bg-slate-900/80 border border-slate-700 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 text-slate-200 placeholder-slate-600 font-mono text-sm leading-relaxed transition-all shadow-inner"
+                spellCheck={false}
+              />
+              <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-600 transition-colors" />
+            </div>
           </div>
+
+          {/* Negative Source Input (Only visible for PIX -> NAI) */}
+          {direction === ConversionDirection.PIX_TO_NAI && (
+            <div className="flex flex-col gap-2 flex-1">
+              <ActionButtons 
+                text={sourceNegativeText} 
+                onClear={() => setSourceNegativeText('')} 
+                label={getSourceNegativeLabel()} 
+              />
+              <div className="relative group flex-1">
+                <textarea
+                  value={sourceNegativeText}
+                  onChange={(e) => setSourceNegativeText(e.target.value)}
+                  placeholder="예시: worst quality, lowres, (bad anatomy:1.4)"
+                  className="w-full h-32 p-4 bg-slate-900/80 border border-red-900/30 border-slate-700 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500 text-slate-200 placeholder-slate-600 font-mono text-sm leading-relaxed transition-all shadow-inner"
+                  spellCheck={false}
+                />
+                <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-600 transition-colors" />
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Result Output */}
-        <div className="flex flex-col gap-2">
-          <ActionButtons 
-            text={resultText} 
-            onClear={() => {}} 
-            label={`결과 (${getTargetLabel()})`} 
-          />
-          <div className="relative group flex-1">
-            <textarea
-              value={resultText}
-              readOnly
-              placeholder="변환된 결과가 여기에 표시됩니다..."
-              className="w-full h-80 lg:h-96 p-4 bg-slate-950/50 border border-slate-800 rounded-xl resize-none focus:outline-none text-indigo-300 font-mono text-sm leading-relaxed shadow-inner"
-              spellCheck={false}
+        {/* Result Column */}
+        <div className="flex flex-col gap-4">
+          
+          {/* Main Result Output */}
+          <div className="flex flex-col gap-2 flex-1">
+            <ActionButtons 
+              text={resultText} 
+              onClear={() => {}} 
+              label={getTargetLabel()} 
             />
-            <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-700 transition-colors" />
+            <div className="relative group flex-1">
+              <textarea
+                value={resultText}
+                readOnly
+                placeholder="변환된 결과가 여기에 표시됩니다..."
+                className="w-full h-64 p-4 bg-slate-950/50 border border-slate-800 rounded-xl resize-none focus:outline-none text-indigo-300 font-mono text-sm leading-relaxed shadow-inner"
+                spellCheck={false}
+              />
+              <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-700 transition-colors" />
+            </div>
           </div>
+
+          {/* Negative Result Output (Only visible for NAI -> PIX) */}
+          {direction === ConversionDirection.NAI_TO_PIX && (
+            <div className="flex flex-col gap-2 flex-1">
+              <ActionButtons 
+                text={resultNegativeText} 
+                onClear={() => {}} 
+                label={getTargetNegativeLabel()} 
+              />
+              <div className="relative group flex-1">
+                <textarea
+                  value={resultNegativeText}
+                  readOnly
+                  placeholder="네거티브 프롬프트가 여기에 표시됩니다..."
+                  className="w-full h-32 p-4 bg-slate-950/50 border border-slate-800 rounded-xl resize-none focus:outline-none text-red-300 font-mono text-sm leading-relaxed shadow-inner"
+                  spellCheck={false}
+                />
+                <div className="absolute inset-0 rounded-xl pointer-events-none border border-transparent group-hover:border-slate-700 transition-colors" />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -128,20 +219,16 @@ const Converter: React.FC = () => {
       <div className="mt-2 p-4 rounded-lg bg-slate-900 border border-slate-800/50 text-xs text-slate-500 space-y-2">
         <p>
           <span className="font-bold text-indigo-400">기본 가중치 (N::):</span> Novel AI 형식에서 
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">2::</code>는 
-          해당 지점부터의 <strong>기본 가중치</strong>를 설정합니다. 
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">::</code>를 만나면 1.0으로 초기화됩니다.
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">2::</code>는 기본 가중치,
+          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">-1::</code>은 네거티브 가중치입니다.
         </p>
         <p>
-          <span className="font-bold text-indigo-400">괄호 연산:</span> NovelAI의
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'{}'}</code>는 <strong>x1.05</strong>, 
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.95</strong>입니다.
-          반면 PixAI/SD의
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">()</code>는 <strong>x1.1</strong>,
-          <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{'[]'}</code>는 <strong>x0.9</strong>입니다.
+          <span className="font-bold text-indigo-400">네거티브 분리:</span> 
+          Novel AI의 <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">-N::</code> 태그는 
+          PixAI 변환 시 자동으로 <strong>Negative Prompt</strong> 영역으로 분리됩니다.
         </p>
         <p>
-          <span className="font-bold text-indigo-400">결과 처리:</span> 모든 변환 결과는 소수점 둘째 자리에서 반올림되며, PixAI 변환 시 <code className="mx-1 px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">(tag:weight)</code> 형식으로 명시적 변환됩니다.
+          <span className="font-bold text-indigo-400">괄호 연산:</span> NovelAI {'{}'} (x1.05) / {'[]'} (x0.95), PixAI () (x1.1) / {'[]'} (x0.9)
         </p>
       </div>
     </div>

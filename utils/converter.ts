@@ -31,6 +31,7 @@ const roundWeight = (num: number): number => {
  * 1. "N::" sets a persistent base weight AND RESETS bracket counters.
  *    - IMPORANT: "N::" completely clears the bracket history for the following text.
  *    - Closing brackets after "N::" will therefore drive depth negative.
+ *    - Supports negative numbers (e.g. -1::, -0.5::)
  * 2. "::" resets base weight to 1.0 and RESETS bracket counters.
  * 3. "{ }" multiplies weight by 1.05 per nesting level.
  * 4. "[ ]" multiplies weight by 0.95 per nesting level.
@@ -51,9 +52,10 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
   
   let buffer = '';
   
-  // Regex to detect "N::" or "::" ahead
+  // Regex to detect "N::" or "::" or "-N::" ahead
   // Matches start of string or immediate position
-  const weightControlRegex = /^(\d*(?:\.\d+)?)?::/;
+  // Updated to include optional minus sign
+  const weightControlRegex = /^(-?\d*(?:\.\d+)?)?::/;
 
   const flush = () => {
     const trimmed = buffer.trim();
@@ -88,8 +90,8 @@ export const parseNovelAI = (text: string): ParsedSegment[] => {
       flush(); // Flush existing buffer before weight change
       
       const numStr = match[1];
-      if (numStr) {
-        // "2::" -> set base to 2
+      if (numStr && numStr !== '-') {
+        // "2::" or "-2::" -> set base
         const w = parseFloat(numStr);
         if (!isNaN(w)) {
             activeBaseWeight = w;
